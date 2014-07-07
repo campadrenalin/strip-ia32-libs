@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+set -o errexit
+# set -o xtrace
+
+unset temp_dir
+trap '[[ -d "$temp_dir" ]] && rm -rf "$temp_dir"' EXIT
+declare -r temp_dir=$(mktemp -dt si32l.XXXXXX)
+declare -r unpack_dir="${temp_dir}/contents";
+declare -r new_pkg="${temp_dir}/pkg.deb";
+
+usage() {
+    echo "$@" >&2
+    echo "===================================" >&2
+    echo "strip-ia32-libs path/to/package.deb" >&2
+    exit 1
+}
+
+unpack() {
+    local -r pkg_path="$1"; shift
+
+    echo "Unpacking package ${pkg_path} into ${unpack_dir}..."
+    mkdir -p "$unpack_dir"
+    dpkg-deb -x "$pkg_path" "$unpack_dir"
+    dpkg-deb --control "$pkg_path" "${unpack_dir}/DEBIAN"
+}
+
+replace() {
+    echo "Replacing ia32-libs dep with appropriate packages..."
+    sed -i -e 's/\bia32-libs\b/lib32z1, lib32ncurses5, lib32bz2-1.0/' "${unpack_dir}/DEBIAN/control"
+}
+
+rebuild() {
+    echo "Rebuilding package to ${new_pkg}..."
+    dpkg -b "$unpack_dir" "$new_pkg"
+}
+
+install() {
+    echo "Install now? [y/N]"
+    read install_now
+    if [[ "$install_now" == "y" || "$install_now" == "Y" ]]; then
+        sudo dpkg -i "$new_pkg"
+        sudo apt-get install -f
+    fi
+}
+
+save() {
+    echo "Save the fixed package somewhere?"
+    echo "[ enter location, or leave blank to delete with temp dir ]"
+    read location
+    if [[ "$location" != "" ]]; then
+        mv "$new_pkg" "$location"
+    fi
+}
+
+main() {
+    if [[ "$#" -ne 1 ]]; then
+        usage "Expects one argument"
+    fi
+    local -r pkg_path="$1"; shift
+
+    unpack $pkg_path
+    replace
+    rebuild
+    install
+    save
+}
+
+main "$@"
